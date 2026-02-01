@@ -68,11 +68,12 @@ class NetworkManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("GPWAN Network Switcher (Admin)")
-        self.root.geometry("600x550")  # Increased width
+        self.root.geometry("600x600")
         
         self.os_type = platform.system()
         self.hostname = socket.gethostname()
         self.current_connected_ssid = None
+        self.connected_interface_name = "Wi-Fi" # Default fallback
         
         # Start the listener server in background
         self.server_thread = threading.Thread(target=self.start_listener, daemon=True)
@@ -92,7 +93,7 @@ class NetworkManagerApp:
         self.status_label.pack(pady=5)
 
         self.btn_frame = tk.Frame(root)
-        self.btn_frame.pack(pady=10, fill="x", padx=20) # Fill width
+        self.btn_frame.pack(pady=10, fill="x", padx=20)
 
         # --- National Internet Section ---
         self.national_frame = tk.LabelFrame(self.btn_frame, text="National Internet (Net Melli)", padx=10, pady=10, font=("Segoe UI", 10, "bold"))
@@ -100,11 +101,9 @@ class NetworkManagerApp:
         
         tk.Label(self.national_frame, text="Select IP Address:").pack(anchor="w")
         
-        # Frame for Combo and Refresh Button
         self.combo_frame = tk.Frame(self.national_frame)
         self.combo_frame.pack(fill="x", pady=5)
 
-        # Increased font size and width for better visibility
         self.ip_combo = ttk.Combobox(self.combo_frame, state="readonly", font=("Consolas", 11), width=40)
         self.ip_combo.pack(side=tk.LEFT, fill="x", expand=True)
         
@@ -125,18 +124,20 @@ class NetworkManagerApp:
                                       bg="#e1e1e1", height=2)
         self.btn_internet.pack(fill="x", pady=5)
         
+        # --- Debug Button ---
+        self.btn_debug = tk.Button(root, text="Show Debug Info", command=self.show_debug_info, font=("Segoe UI", 8))
+        self.btn_debug.pack(pady=5)
+
         self.log_text = tk.Text(root, height=8, width=60, font=("Consolas", 9))
         self.log_text.pack(pady=10, padx=20, fill="x")
 
         self.log(f"OS: {self.os_type} | Host: {self.hostname}")
         self.log(f"Listening on port {APP_PORT}...")
         
-        # Initial population of list (without scanning to be fast)
         self.ip_combo['values'] = NATIONAL_IP_RANGE
         if NATIONAL_IP_RANGE:
             self.ip_combo.current(0)
 
-        # Start monitoring connection
         self.check_connection()
 
     def log(self, message):
@@ -144,9 +145,7 @@ class NetworkManagerApp:
         self.log_text.see(tk.END)
         self.root.update()
 
-    # --- Networking Listener ---
     def start_listener(self):
-        """Runs a TCP server to respond to other clients scanning this IP."""
         try:
             server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server_socket.bind(('0.0.0.0', APP_PORT))
@@ -154,41 +153,28 @@ class NetworkManagerApp:
             while True:
                 client_socket, addr = server_socket.accept()
                 try:
-                    # Send my hostname to whoever connects
                     client_socket.send(self.hostname.encode('utf-8'))
                 except:
                     pass
                 finally:
                     client_socket.close()
         except Exception as e:
-            # Port might be busy or permission denied
             print(f"Listener Error: {e}")
 
-    # --- IP Scanner ---
     def refresh_ip_list(self):
-        """Scans the target IPs to see if they are running this app."""
         self.log("Scanning IPs for active users...")
         self.btn_refresh.config(state=tk.DISABLED, text="Scanning...")
-        
-        # Run in thread to not freeze UI
         threading.Thread(target=self._scan_thread, daemon=True).start()
 
     def _scan_thread(self):
         display_list = []
-        
         for ip in NATIONAL_IP_RANGE:
             status = "Available"
-            
-            # Check if it's me (simple check)
-            # Note: This is tricky if we have multiple interfaces, but we try to connect anyway.
-            
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(0.15) # Fast timeout
+                s.settimeout(0.15)
                 result = s.connect_ex((ip, APP_PORT))
-                
                 if result == 0:
-                    # Connection successful, try to read hostname
                     try:
                         remote_hostname = s.recv(1024).decode('utf-8').strip()
                         status = f"Used by: {remote_hostname}"
@@ -199,10 +185,7 @@ class NetworkManagerApp:
                     s.close()
             except:
                 pass
-            
             display_list.append(f"{ip}   [{status}]")
-
-        # Update UI in main thread
         self.root.after(0, lambda: self._update_combo(display_list))
 
     def _update_combo(self, values):
@@ -212,13 +195,66 @@ class NetworkManagerApp:
         self.btn_refresh.config(state=tk.NORMAL, text="↻ Scan IPs")
         self.log("Scan complete.")
 
-    # --- Existing Logic ---
     def get_wifi_ssid(self):
+        """
+        Returns the SSID of the connected WiFi network.
+        Also updates self.connected_interface_name with the interface name.
+        """
         try:
             if self.os_type == "Windows":
-                output = subprocess.check_output("netsh wlan show interfaces", shell=True).decode('utf-8', errors='ignore')
-                match = re.search(r"^\s*SSID\s*:\s*(.*)$", output, re.MULTILINE)
-                if match: return match.group(1).strip()
+                raw_output = subprocess.check_output("netsh wlan show interfaces", shell=True)
+                output = ""
+                for encoding in ['utf-8', 'cp1252', 'cp850', 'mbcs']:
+                    try:
+                        output = raw_output.decode(encoding)
+                        break
+                    except:
+                        continue
+                
+                # Split output into blocks per interface
+                # Each interface block starts with "    Name                   : Wi-Fi" (or similar)
+                # We want to find the block that has "State : connected" AND has our SSID
+                
+                # Simple regex to find all SSIDs
+                # This finds all occurrences of "SSID : <name>"
+                matches = re.findall(r"^\s*SSID\s*:\s*(.*)$", output, re.MULTILINE)
+                
+                # Also try to find the interface name associated with the connected SSID
+                # This is a bit complex with regex on the full text, so we'll do a simpler approach:
+                # If we find one of our target SSIDs in the output, we assume we are connected.
+                # For the interface name, we'll try to extract it from the same block if possible,
+                # otherwise we default to "Wi-Fi".
+                
+                for ssid in matches:
+                    ssid = ssid.strip()
+                    if ssid in TARGET_SSIDS:
+                        # We found a target SSID connected!
+                        # Now let's try to find the interface name for this SSID
+                        # We look for the "Name : <interface>" line preceding this SSID
+                        # This is tricky without parsing blocks, but let's try a simple search
+                        
+                        # Find the block containing this SSID
+                        # We assume the interface name appears before the SSID in the output
+                        try:
+                            # Find index of SSID
+                            idx = output.find(ssid)
+                            # Search backwards for "Name"
+                            # "    Name                   : Wi-Fi"
+                            name_match = re.search(r"^\s*Name\s*:\s*(.*)$", output[:idx], re.MULTILINE | re.DOTALL)
+                            if name_match:
+                                # Get the last match before the SSID
+                                all_names = re.findall(r"^\s*Name\s*:\s*(.*)$", output[:idx], re.MULTILINE)
+                                if all_names:
+                                    self.connected_interface_name = all_names[-1].strip()
+                        except:
+                            pass
+                            
+                        return ssid
+                
+                # If no target SSID found, just return the first connected SSID found (if any)
+                if matches:
+                    return matches[0].strip()
+
             elif self.os_type == "Linux":
                 try:
                     output = subprocess.check_output("iwgetid -r", shell=True).decode('utf-8').strip()
@@ -235,6 +271,23 @@ class NetworkManagerApp:
                 if match: return match.group(1).strip()
         except: pass
         return None
+
+    def show_debug_info(self):
+        self.log("--- DEBUG INFO ---")
+        try:
+            if self.os_type == "Windows":
+                raw = subprocess.check_output("netsh wlan show interfaces", shell=True)
+                try:
+                    decoded = raw.decode('utf-8')
+                except:
+                    decoded = raw.decode('cp1252', errors='ignore')
+                self.log(decoded)
+                self.log(f"Detected Interface: {self.connected_interface_name}")
+            else:
+                self.log("Debug info only implemented for Windows netsh output.")
+        except Exception as e:
+            self.log(f"Debug Error: {e}")
+        self.log("------------------")
 
     def check_connection(self):
         ssid = self.get_wifi_ssid()
@@ -262,15 +315,10 @@ class NetworkManagerApp:
         if not selection:
             messagebox.showerror("Error", "Please select an IP address.")
             return
-        
-        # Extract IP from string "192.168.80.5   [Available]"
         selected_ip = selection.split()[0]
-        
-        # Check if user selected a used IP
         if "Used by" in selection:
             if not messagebox.askyesno("Warning", f"This IP seems to be in use.\n{selection}\n\nDo you still want to force apply it?"):
                 return
-
         config = CONFIG_NATIONAL_BASE.copy()
         config["ip"] = selected_ip
         self.apply_settings(config, f"National Net ({selected_ip})")
@@ -282,7 +330,6 @@ class NetworkManagerApp:
         if not is_admin():
             messagebox.showerror("Error", "Lost admin privileges.")
             return
-
         self.log(f"Applying settings for {name}...")
         try:
             if self.os_type == "Windows":
@@ -291,7 +338,6 @@ class NetworkManagerApp:
                 self.apply_linux(config)
             elif self.os_type == "Darwin":
                 self.apply_mac(config)
-            
             self.log(f"Successfully applied {name} settings.")
             messagebox.showinfo("Success", f"Network configured for {name}.")
         except subprocess.CalledProcessError as e:
@@ -302,12 +348,14 @@ class NetworkManagerApp:
             messagebox.showerror("Error", str(e))
 
     def apply_windows(self, config):
-        if_name = "Wi-Fi" 
+        # Use the detected interface name instead of hardcoded "Wi-Fi"
+        if_name = self.connected_interface_name
+        self.log(f"Configuring Interface: {if_name}")
+
         if config["dhcp"]:
             self.run_cmd(f'netsh interface ip set address "{if_name}" dhcp')
         else:
             self.run_cmd(f'netsh interface ip set address "{if_name}" static {config["ip"]} {config["subnet"]} {config["gateway"]}')
-        
         if config.get("dns"):
             dns_list = config["dns"].split()
             self.run_cmd(f'netsh interface ip set dns "{if_name}" static {dns_list[0]}')
@@ -317,16 +365,12 @@ class NetworkManagerApp:
             self.run_cmd(f'netsh interface ip set dns "{if_name}" dhcp')
 
     def apply_linux(self, config):
-        # Use the current connected SSID as the connection name
-        # This is more robust than hardcoding TARGET_SSID
         conn_name = self.current_connected_ssid if self.current_connected_ssid else TARGET_SSIDS[0]
-
         if config["dhcp"]:
             self.run_cmd(f'nmcli con mod "{conn_name}" ipv4.method auto')
             self.run_cmd(f'nmcli con mod "{conn_name}" ipv4.gateway ""')
         else:
             self.run_cmd(f'nmcli con mod "{conn_name}" ipv4.method manual ipv4.addresses {config["ip"]}/24 ipv4.gateway {config["gateway"]}')
-        
         if config.get("dns"):
             self.run_cmd(f'nmcli con mod "{conn_name}" ipv4.ignore-auto-dns yes')
             self.run_cmd(f'nmcli con mod "{conn_name}" ipv4.dns "{config["dns"]}"')
@@ -341,7 +385,6 @@ class NetworkManagerApp:
             self.run_cmd(f'networksetup -setdhcp "{service}"')
         else:
             self.run_cmd(f'networksetup -setmanual "{service}" {config["ip"]} {config["subnet"]} {config["gateway"]}')
-
         if config.get("dns"):
             self.run_cmd(f'networksetup -setdnsservers "{service}" {config["dns"]}')
         else:
