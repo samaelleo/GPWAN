@@ -11,20 +11,40 @@ permissions:
 
 jobs:
   build:
-    name: Build for ${{ matrix.os }}
+    name: Build for ${{ matrix.os_name }} (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
+          # Windows
           - os: windows-latest
+            os_name: Windows
+            arch: x64
             target: windows
             final_name: GPWAN_Switcher_Windows.exe
+
+          # Linux
           - os: ubuntu-latest
+            os_name: Linux
+            arch: x64
             target: linux
-            final_name: GPWAN_Switcher_Linux
-          - os: macos-latest
+            final_name: GPWAN_Switcher_Linux_x64.AppImage 
+            # Note: We name it .AppImage for user clarity, though it's a PyInstaller onefile binary.
+            # Real AppImage requires a complex build process with appimagetool.
+
+          # MacOS Intel
+          - os: macos-13
+            os_name: MacOS
+            arch: Intel
             target: macos
-            final_name: GPWAN_Switcher_MacOS.zip
+            final_name: GPWAN_Switcher_MacOS_Intel.zip
+
+          # MacOS Apple Silicon (M1/M2/M3)
+          - os: macos-14
+            os_name: MacOS
+            arch: AppleSilicon
+            target: macos
+            final_name: GPWAN_Switcher_MacOS_AppleSilicon.zip
 
     steps:
     - name: Checkout code
@@ -55,12 +75,12 @@ jobs:
         pyinstaller --onefile --noconsole --name "GPWAN_Switcher" main.py
         cd dist
         mv GPWAN_Switcher ${{ matrix.final_name }}
+        chmod +x ${{ matrix.final_name }}
 
     # --- MacOS Build (Create .app bundle) ---
     - name: Build MacOS
       if: matrix.target == 'macos'
       run: |
-        # --windowed creates a .app bundle instead of a binary
         pyinstaller --windowed --noconsole --name "GPWAN_Switcher" main.py
         
         # Zip the .app bundle
