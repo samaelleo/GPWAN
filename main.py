@@ -13,7 +13,7 @@ import threading
 # ==========================================
 # CONFIGURATION
 # ==========================================
-TARGET_SSID = "Group Lancing - Employe 5G"
+TARGET_SSIDS = ["Group Lancing - Employe 5G", "Group Lancing - Employe 2.4G"]
 APP_PORT = 55555  # Fixed port for communication
 
 # Configuration for "National Internet" (Net Melli)
@@ -72,6 +72,7 @@ class NetworkManagerApp:
         
         self.os_type = platform.system()
         self.hostname = socket.gethostname()
+        self.current_connected_ssid = None
         
         # Start the listener server in background
         self.server_thread = threading.Thread(target=self.start_listener, daemon=True)
@@ -237,14 +238,16 @@ class NetworkManagerApp:
 
     def check_connection(self):
         ssid = self.get_wifi_ssid()
+        self.current_connected_ssid = ssid
+        
         if ssid:
             self.ssid_label.config(text=f"Current WiFi: {ssid}")
-            if ssid == TARGET_SSID:
+            if ssid in TARGET_SSIDS:
                 self.status_label.config(text="Target Network Connected", fg="green")
                 self.btn_national.config(state=tk.NORMAL, bg="#d1e7dd")
                 self.btn_internet.config(state=tk.NORMAL, bg="#d1e7dd")
             else:
-                self.status_label.config(text=f"Incorrect Network. Please connect to:\n{TARGET_SSID}", fg="red")
+                self.status_label.config(text=f"Incorrect Network. Please connect to:\n{TARGET_SSIDS[0]} or {TARGET_SSIDS[1]}", fg="red")
                 self.btn_national.config(state=tk.DISABLED, bg="#e1e1e1")
                 self.btn_internet.config(state=tk.DISABLED, bg="#e1e1e1")
         else:
@@ -314,7 +317,10 @@ class NetworkManagerApp:
             self.run_cmd(f'netsh interface ip set dns "{if_name}" dhcp')
 
     def apply_linux(self, config):
-        conn_name = TARGET_SSID
+        # Use the current connected SSID as the connection name
+        # This is more robust than hardcoding TARGET_SSID
+        conn_name = self.current_connected_ssid if self.current_connected_ssid else TARGET_SSIDS[0]
+
         if config["dhcp"]:
             self.run_cmd(f'nmcli con mod "{conn_name}" ipv4.method auto')
             self.run_cmd(f'nmcli con mod "{conn_name}" ipv4.gateway ""')

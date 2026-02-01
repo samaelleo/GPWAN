@@ -30,13 +30,6 @@ jobs:
             target: linux
             final_name: GPWAN_Switcher_Linux_x64.AppImage 
 
-          # MacOS Intel (Using macos-12 as macos-13 is retired)
-          - os: macos-12
-            os_name: MacOS
-            arch: Intel
-            target: macos
-            final_name: GPWAN_Switcher_MacOS_Intel.zip
-
           # MacOS Apple Silicon (M1/M2/M3)
           - os: macos-14
             os_name: MacOS
