@@ -29,11 +29,9 @@ jobs:
             arch: x64
             target: linux
             final_name: GPWAN_Switcher_Linux_x64.AppImage 
-            # Note: We name it .AppImage for user clarity, though it's a PyInstaller onefile binary.
-            # Real AppImage requires a complex build process with appimagetool.
 
-          # MacOS Intel
-          - os: macos-13
+          # MacOS Intel (Using macos-12 as macos-13 is retired)
+          - os: macos-12
             os_name: MacOS
             arch: Intel
             target: macos
