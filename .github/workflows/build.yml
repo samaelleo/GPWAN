@@ -17,14 +17,14 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            original_name: GPWAN_Switcher.exe
+            target: windows
             final_name: GPWAN_Switcher_Windows.exe
           - os: ubuntu-latest
-            original_name: GPWAN_Switcher
+            target: linux
             final_name: GPWAN_Switcher_Linux
           - os: macos-latest
-            original_name: GPWAN_Switcher
-            final_name: GPWAN_Switcher_MacOS
+            target: macos
+            final_name: GPWAN_Switcher_MacOS.zip
 
     steps:
     - name: Checkout code
@@ -40,28 +40,34 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Build with PyInstaller (Windows)
-      if: matrix.os == 'windows-latest'
+    # --- Windows Build ---
+    - name: Build Windows
+      if: matrix.target == 'windows'
       run: |
         pyinstaller --onefile --noconsole --uac-admin --name "GPWAN_Switcher" main.py
+        cd dist
+        move GPWAN_Switcher.exe ${{ matrix.final_name }}
 
-    - name: Build with PyInstaller (Linux/MacOS)
-      if: matrix.os != 'windows-latest'
+    # --- Linux Build ---
+    - name: Build Linux
+      if: matrix.target == 'linux'
       run: |
         pyinstaller --onefile --noconsole --name "GPWAN_Switcher" main.py
-
-    - name: Rename Binary (Windows)
-      if: matrix.os == 'windows-latest'
-      run: |
         cd dist
-        move ${{ matrix.original_name }} ${{ matrix.final_name }}
+        mv GPWAN_Switcher ${{ matrix.final_name }}
 
-    - name: Rename Binary (Linux/MacOS)
-      if: matrix.os != 'windows-latest'
+    # --- MacOS Build (Create .app bundle) ---
+    - name: Build MacOS
+      if: matrix.target == 'macos'
       run: |
+        # --windowed creates a .app bundle instead of a binary
+        pyinstaller --windowed --noconsole --name "GPWAN_Switcher" main.py
+        
+        # Zip the .app bundle
         cd dist
-        mv ${{ matrix.original_name }} ${{ matrix.final_name }}
+        zip -r ${{ matrix.final_name }} GPWAN_Switcher.app
 
+    # --- Upload Artifacts ---
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
